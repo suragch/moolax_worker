@@ -4,3 +4,4 @@
 *.lock
 *.log
 .env
+.dev.vars

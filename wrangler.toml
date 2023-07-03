@@ -8,11 +8,21 @@ compatibility_date = "2023-07-03"
 # [vars]
 # MY_VARIABLE = "production_value"
 
+# https://developers.cloudflare.com/workers/platform/environment-variables#add-secrets-to-your-project
+# The necessary secrets are:
+# - FIXER_ACCESS_KEY
+# Run `echo <VALUE> | wrangler secret put <NAME>` for each of these
+
+
+
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/runtime-apis/kv
 # [[kv_namespaces]]
 # binding = "MY_KV_NAMESPACE"
 # id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+[[kv_namespaces]]
+binding = "MOOLAX_CACHE_KV"
+id = "c236372d4c06471fb089b9c4653dbf72"
 
 # Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
 # Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
