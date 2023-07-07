@@ -12,4 +12,5 @@ If the fixer.io api key changes, you will need to update that with the following
 
 ```
 wrangler secret put FIXER_ACCESS_KEY
+wrangler secret put CLIENT_API_KEY
 ```

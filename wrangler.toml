@@ -11,6 +11,7 @@ compatibility_date = "2023-07-03"
 # https://developers.cloudflare.com/workers/platform/environment-variables#add-secrets-to-your-project
 # The necessary secrets are:
 # - FIXER_ACCESS_KEY
+# - CLIENT_API_KEY
 # Run `echo <VALUE> | wrangler secret put <NAME>` for each of these
 
 
