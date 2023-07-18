@@ -1,6 +1,4 @@
-
-
-
+// Worker
 
 export default {
 	async fetch(request, env, ctx) {
@@ -33,35 +31,53 @@ function handleOptionsRequest() {
 	});
 }
 
+let fxCache;
+let cacheDate;
+
 async function handleGetRequests(request, env) {
 	// authenticate
 	const authErrorResponse = await authenticateRequest(request, env);
     if (authErrorResponse) {
         return authErrorResponse;
     }
-
-	const fxCache = await env.MOOLAX_CACHE_KV.get('fxCache');
-    const lastCacheDate = await env.MOOLAX_CACHE_KV.get('lastCacheDate');
-    const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-	const now = Date.now();
-	const isCacheValid = (now - lastCacheDate) < ONE_DAY;
+	
 	let headers = new Headers();
-		headers.append('Access-Control-Allow-Origin', '*');
-		headers.append('Content-Type', 'application/json');
+	headers.append('Access-Control-Allow-Origin', '*');
+	headers.append('Content-Type', 'application/json');
+     
+	// first check the local cache
+	if (fxCache && cacheDate && isCacheValid(cacheDate)) {
+		console.log('Using worker cache. This is free.');
+		return new Response(fxCache, { headers: headers });
+	}
 
-    if (fxCache && lastCacheDate && isCacheValid) {
-		console.log('returning cached data');
-        return new Response(fxCache, { headers: headers });
-    }
+	// then check the KV cache
+	fxCache = await env.MOOLAX_CACHE_KV.get('fxCache');
+    cacheDate = await env.MOOLAX_CACHE_KV.get('cacheDate');
+	if (fxCache && cacheDate && isCacheValid(cacheDate)) {
+		console.log('Using KV cache. This is cheap.');
+		return new Response(fxCache, { headers: headers });
+	}
 
+	// then check the Durable Object cache
+	let id = env.MOOLAX_DURABLE_OBJECT.idFromName('moolax');
+	let durableObject = env.MOOLAX_DURABLE_OBJECT.get(id);
+	let resp = await durableObject.fetch(request);
+	let values = await resp.json();
+	fxCache = values.fxCache;
+	cacheDate = values.cacheDate;
+	if (fxCache && cacheDate && isCacheValid(cacheDate)) {
+		console.log('Using Durable Object cache. This is reliable.');
+		return new Response(fxCache, { headers: headers });
+	}
+
+	// finally get the value from the third party server
 	console.log('contacting fixer.io');
 	const fixerUrl = `http://data.fixer.io/api/latest?access_key=${env.FIXER_ACCESS_KEY}`;
     const response = await fetch(fixerUrl);
-
 	if (!response.ok) {
 		return new Response(`Third-party server failed with status ${response.status}`, { status: 500 });
 	}
-
 	const data = await response.json();
   	const success = data.success;
     if (!success) {
@@ -69,8 +85,19 @@ async function handleGetRequests(request, env) {
 	}
 	
 	const jsonString = JSON.stringify(data);
+	const now = Date.now();
+	// TODO update Durable Object
+	await env.MOOLAX_DURABLE_OBJECT.fetch(request.url, {
+		method: 'PUT',
+		body: JSON.stringify({
+			'fxCache': jsonString,
+			'cacheDate': now.toString()
+		}),
+	});
     await env.MOOLAX_CACHE_KV.put('fxCache', jsonString);
-	await env.MOOLAX_CACHE_KV.put('lastCacheDate', now.toString());
+	await env.MOOLAX_CACHE_KV.put('cacheDate', now.toString());
+
+	console.log('updated caches from server. This should happen only once a day max.');
 	return new Response(jsonString, { headers: headers });
 }
 
@@ -88,4 +115,35 @@ async function authenticateRequest(request, env) {
 		return new Response('Not Found', { status: 404 });
 	}
     return null;
+}
+
+function isCacheValid(cachedDate) {
+	const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+	const now = Date.now();
+	return (now - cachedDate) < ONE_DAY;
+}
+
+// Durable object
+
+export class MoolaxDurableObject {
+	constructor(state, env) {
+	  this.state = state;
+	}
+  
+	async fetch(request) {
+		if (request.method === 'GET') {
+			let fxCache = await this.state.storage.get("fxCache");
+			let cacheDate = await this.state.storage.get("cacheDate");
+			return new Response(JSON.stringify({"fxCache": fxCache, "cacheDate": cacheDate}));
+		} else if (request.method === 'PUT') {
+			const requestBody = await request.json();
+			const cacheDate = requestBody.cacheDate;
+			const fxCache = requestBody.fxCache;
+			await this.state.storage.put("fxCache", fxCache);
+			await this.state.storage.put("cacheDate", cacheDate);
+			return new Response(null, { status: 204 });
+		} else {
+			return new Response(null);
+		}
+	}
 }
