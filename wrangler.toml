@@ -1,5 +1,5 @@
 name = "moolaxworker"
-main = "src/worker.js"
+main = "src/worker.mjs"
 compatibility_date = "2023-07-03"
 workers_dev = false
 
@@ -14,8 +14,6 @@ workers_dev = false
 # - FIXER_ACCESS_KEY
 # - CLIENT_API_KEY
 # Run `echo <VALUE> | wrangler secret put <NAME>` for each of these
-
-
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/runtime-apis/kv

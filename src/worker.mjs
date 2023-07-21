@@ -6,7 +6,7 @@ export default {
 
 		// Set the CORS headers for the preflight request
 		if (method === 'OPTIONS') {
-			return handleOptionsRequest();
+			return new Response(null, {headers: corsHeaders});
 		}
 
 		// Handle GET request
@@ -21,15 +21,11 @@ export default {
 	},
 };
 
-function handleOptionsRequest() {
-	return new Response(null, {
-	  headers: {
-		'Access-Control-Allow-Origin': '*',
-		'Access-Control-Allow-Methods': 'GET, OPTIONS',
-		'Access-Control-Allow-Headers': 'Content-Type',
-	  },
-	});
-}
+const corsHeaders = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET, OPTIONS',
+	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
 
 let fxCache;
 let cacheDate;
@@ -41,9 +37,10 @@ async function handleGetRequests(request, env) {
         return authErrorResponse;
     }
 	
-	let headers = new Headers();
-	headers.append('Access-Control-Allow-Origin', '*');
-	headers.append('Content-Type', 'application/json');
+	let headers = {
+		'Content-Type': 'application/json',
+		...corsHeaders,
+	};
      
 	// first check the local cache
 	if (fxCache && cacheDate && isCacheValid(cacheDate)) {
@@ -68,6 +65,7 @@ async function handleGetRequests(request, env) {
 	cacheDate = values.cacheDate;
 	if (fxCache && cacheDate && isCacheValid(cacheDate)) {
 		console.log('Using Durable Object cache. This is reliable.');
+		saveToKv(fxCache, cacheDate, env);
 		return new Response(fxCache, { headers: headers });
 	}
 
@@ -76,7 +74,9 @@ async function handleGetRequests(request, env) {
 	const fixerUrl = `http://data.fixer.io/api/latest?access_key=${env.FIXER_ACCESS_KEY}`;
     const response = await fetch(fixerUrl);
 	if (!response.ok) {
-		return new Response(`Third-party server failed with status ${response.status}`, { status: 500 });
+		const responseBody = await response.text();
+		console.log(`fixer.io error: ${responseBody}`);
+		return new Response(`Third-party server failed with status ${response.status}.`, { status: 500 });
 	}
 	const data = await response.json();
   	const success = data.success;
@@ -84,21 +84,33 @@ async function handleGetRequests(request, env) {
 		return new Response(`Error: ${JSON.stringify(data.error)}`, { status: 500 });
 	}
 	
-	const jsonString = JSON.stringify(data);
-	const now = Date.now();
-	// TODO update Durable Object
-	await env.MOOLAX_DURABLE_OBJECT.fetch(request.url, {
-		method: 'PUT',
-		body: JSON.stringify({
-			'fxCache': jsonString,
-			'cacheDate': now.toString()
-		}),
-	});
-    await env.MOOLAX_CACHE_KV.put('fxCache', jsonString);
-	await env.MOOLAX_CACHE_KV.put('cacheDate', now.toString());
+	// update cache
+	fxCache = JSON.stringify(data);
+	cacheDate = Date.now().toString();
+	saveToKv(fxCache, cacheDate, env);
+	await saveToDurableObject(fxCache, cacheDate, durableObject);
 
 	console.log('updated caches from server. This should happen only once a day max.');
 	return new Response(jsonString, { headers: headers });
+}
+
+// Not waiting for the save to finish in order to improve response times.
+// KV is already only eventually consistent anyway.
+function saveToKv(cache, date, env) {
+	env.MOOLAX_CACHE_KV.put('fxCache', cache);
+	env.MOOLAX_CACHE_KV.put('cacheDate', date);
+	// In the future, if we need to halve the number of KV reads and writes,
+	// we could combine the two variables into a single json object.
+}
+
+async function saveToDurableObject(cache, date, durableObject) {
+	await durableObject.fetch(request.url, {
+		method: 'PUT',
+		body: JSON.stringify({
+			'fxCache': cache,
+			'cacheDate': date
+		}),
+	});
 }
 
 async function authenticateRequest(request, env) {
