@@ -88,10 +88,16 @@ async function handleGetRequests(request, env) {
 	fxCache = JSON.stringify(data);
 	cacheDate = Date.now().toString();
 	saveToKv(fxCache, cacheDate, env);
-	await saveToDurableObject(fxCache, cacheDate, durableObject);
+	await durableObject.fetch(request.url, {
+		method: 'PUT',
+		body: JSON.stringify({
+			'fxCache': fxCache,
+			'cacheDate': cacheDate
+		}),
+	});
 
 	console.log('updated caches from server. This should happen only once a day max.');
-	return new Response(jsonString, { headers: headers });
+	return new Response(fxCache, { headers: headers });
 }
 
 // Not waiting for the save to finish in order to improve response times.
@@ -101,16 +107,6 @@ function saveToKv(cache, date, env) {
 	env.MOOLAX_CACHE_KV.put('cacheDate', date);
 	// In the future, if we need to halve the number of KV reads and writes,
 	// we could combine the two variables into a single json object.
-}
-
-async function saveToDurableObject(cache, date, durableObject) {
-	await durableObject.fetch(request.url, {
-		method: 'PUT',
-		body: JSON.stringify({
-			'fxCache': cache,
-			'cacheDate': date
-		}),
-	});
 }
 
 async function authenticateRequest(request, env) {
